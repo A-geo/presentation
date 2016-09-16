@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset=utf-8 />
+		<title>Pick-up calculation</title>
+		<meta name='viewport' content='initial-scale=1,maximum-scale=1,user-scalable=no' />
+		<script src='https://api.mapbox.com/mapbox.js/v2.3.0/mapbox.js'></script>
+		<script src="jquery-2.2.3.min.js"></script>
+		<script src="jquery-csv.js"></script>
+		<link href='https://api.mapbox.com/mapbox.js/v2.3.0/mapbox.css' rel='stylesheet' />
+		<style>
+			html, body, #map, .row-fluid{ height: 100%;}
+			#map-wrapper { width: 80%; height: 80%; position: relative; border: 1px solid black; left: 10%; top: 10%}
+			#map {width: 100%; height: 100%; background-color: white;}
+			#button-wrapper { position: absolute; top: 10px; right: 10px; width: 200px; border: 1px solid black; background-color: white; padding-bottom: 10px}
+			#legend-table { width: 120px; height: 30px; text-align: center; margin-top: 20px; margin-left:40px; border: 1px solid black } 
+			#value-table { width: 180px; height: 120px; text-align: center; margin-top: 20px; margin-left:10px } 
+			.btnStyle { border-radius: 15px; background-color: #4D90FE;  border: 1px solid #3079ED; color: #FFFFFF; width: 150px; height: 30px; text-align: center; margin-top: 10px; margin-left:25px; font-family: Garamond; font-size: 15px}
+			.value-value { border-radius: 15px; background-color: #4D90FE;  border: 1px solid #3079ED; color: #FFFFFF; width: 80px; line-height:30px; height: 30px; text-align: center; margin-top: 10px; margin-left:50px; font-family: Garamond; font-size: 15px; font-weight: bold}
+			.legend-text {font-family: Garamond; font-size: 15px; font-weight: bold}
+			.value-text {font-family: Garamond; font-size: 16px; font-weight: bold}
+			.box{ width:40px; height:20px; border: 1px solid black}
+			.light {background: #B6EDF0}
+			.middle {background: #5CA3E6}
+			.dark {background: #090991}
+			.horiz-line {border: 2px dashed #3079ED; margin-top:20px}
+			
+		</style>
+	</head>
+
+	<body>
+		<script src='https://api.mapbox.com/mapbox.js/plugins/leaflet-fullscreen/v1.0.1/Leaflet.fullscreen.min.js'></script>
+		<link href='https://api.mapbox.com/mapbox.js/plugins/leaflet-fullscreen/v1.0.1/leaflet.fullscreen.css' rel='stylesheet' />
+		
+		<div class="span9" style="height:100%">
+			<div id="map-wrapper">
+				<div id="map"></div>
+				<div id="button-wrapper">
+					<form class="form-control" >
+						<input type="range" id="RadiusSlider" min="0" max="2" step="0.1" class="btnStyle" value=1>
+						<input type="button" id="RadiusShow" class="btnStyle" value="Radius: 1km" /> 
+						<input type="button" value="Reset" id="Btn2" class="btnStyle" onclick = "resetMap()" /> 
+					</form>
+					<hr class="horiz-line">
+					<div id="value-table">
+						<div class="value-text" >Total parcels in radius:</div>
+						<div id="total_parcels" class="value-value">0</div>
+						<div class="value-text">% of demand in radius:</div>
+						<div id="pct_demand_radius" class="value-value">0%</div>
+					</div>
+					<hr class="horiz-line">
+					<img src="/comeos/logo_ua.png" style="width:180px;height:54px;margin-left:10px;margin-top:10px">
+				</div>
+			</div>
+		</div>
+	
+
+
+		<script>
+		
+			
+			//Global variables
+			var geoJson;
+			L.mapbox.accessToken = 'pk.eyJ1Ijoiam9yaXNiIiwiYSI6ImNpbHUxMGtkcjAwNTR1am00NHQydDFhMjMifQ.0WurDht28F5Xw4Bb_LlZlQ';
+			var map = L.mapbox.map('map', 'mapbox.light')
+			
+			//init variables
+			var radius = 1;
+			var totalParcels = 11791//total number of parcels
+			//variables for showing value in html
+			var parcelsInRadius = 0;
+			var totalShare = 0;
+			var latMarker;
+			var lonMarker;
+			//arrays for containing zipdata
+			var markArray = [];
+			
+			//Prevent zooming on when double clicking
+			map.doubleClickZoom.disable(); 
+
+			//now maps get really loaded
+			map.setView([51.219448, 4.402464], 13);
+
+			//catch dblclick on map
+			map.on('dblclick', whenClicked);
+			
+			//catch dblclick on geojson layer
+			function onEachFeature(feature, layer) {
+				//bind click
+				layer.on('dblclick', whenClicked);		
+			}
+			
+			//actions when dblclicked: create marker + calculate prices
+			function whenClicked(e) {
+
+				lonMarker = e.latlng.lng;
+				latMarker = e.latlng.lat;
+				//create marker
+				marker = new L.Marker([e.latlng.lat, e.latlng.lng]); //markerpoint
+				markerRadius = new L.circle([e.latlng.lat,e.latlng.lng], radius*1000); //markercircle
+				map.addLayer(marker);
+				map.addLayer(markerRadius)
+				marker.bindPopup("Pick-up facility");
+				//Add markers to list for deletion later
+				markArray.push([marker,markerRadius])
+				//find zips in radius
+				findZipsInRadius(); 
+				
+			}
+
+			
+			//find deliveries within radius, call functions for share calculation
+			function findZipsInRadius() {				
+				geoJson.eachLayer(function(featureInstanceLayer) {
+					
+					var dist = distance(latMarker,lonMarker,featureInstanceLayer.feature.geometry.coordinates[1],featureInstanceLayer.feature.geometry.coordinates[0]);
+					
+					if (dist < radius){
+						parcelsInRadius = parcelsInRadius + featureInstanceLayer.feature.properties.NumberDeli;
+						//restyle layer
+						restyleLayer("#55bf2a",featureInstanceLayer);
+					}
+					
+				});
+				
+				var pctParcelsRadius = parcelsInRadius/totalParcels*100;
+				document.getElementById("pct_demand_radius").innerHTML = pctParcelsRadius.toFixed(0).toString() + "%";
+				document.getElementById("total_parcels").innerHTML = parcelsInRadius.toFixed(0).toString();
+
+			}
+			
+			function restyleLayer(color, featureInstanceLayer) {
+
+				featureInstanceLayer.setStyle({
+					radius: 2,
+					fillColor: color,
+					color: "#000",
+					weight: 0.5,
+					opacity: 1,
+					fillOpacity: 0.8
+				});
+				
+			}			
+				
+			//calculate distance between two lat lon points
+			function distance(lat1, lon1, lat2, lon2) {
+				var p = 0.017453292519943295;    // Math.PI / 180
+				var c = Math.cos;
+				var a = 0.5 - c((lat2 - lat1) * p)/2 + 
+					  c(lat1 * p) * c(lat2 * p) * 
+					  (1 - c((lon2 - lon1) * p))/2;
+
+				return 12742 * Math.asin(Math.sqrt(a)); // 2 * R; R = 6371 km
+			}
+			
+			//Reset values in map
+			function resetMap() {
+				
+				//Reset variables
+				parcelsInRadius = 0;
+				totalShare = 0;
+				
+				//Delete marker
+				removeMarkers();
+				
+				//clear prev arrays				
+				markArray = []
+				
+				//for each point, reset style to default
+				geoJson.eachLayer(function(featureInstanceLayer) {
+					restyleLayer('#BBC2C4',featureInstanceLayer);
+				});
+				
+				//reset values
+				document.getElementById("pct_demand_radius").innerHTML = "0%";
+				document.getElementById("total_parcels").innerHTML = "0";
+			}
+			
+			function removeMarkers(){
+				//check if markers exist
+				if (markArray.length > 0) {
+					// the marker is defined, delete marker point and circle
+					for(i=0;i<markArray.length;i++) {
+						map.removeLayer(markArray[i][0]);
+						map.removeLayer(markArray[i][1]);
+					}  
+				}
+			}
+			
+			function redrawMarkers(){
+				
+				//redraw circles
+				for(i=0;i<markArray.length;i++) {
+					var currentMarker = markArray[i][1];
+					map.removeLayer(currentMarker);
+					markArray[i][1] = new L.circle([currentMarker._latlng.lat,currentMarker._latlng.lng], radius*1000);
+					map.addLayer(markArray[i][1]);
+				}
+			}
+			
+			function recalculatePoints(){
+				parcelsInRadius = 0;
+				geoJson.eachLayer(function(featureInstanceLayer) {
+				
+					for(i=0;i<markArray.length;i++) {
+						var withinBorder = false;
+						var currentMarker = markArray[i][0];
+						var dist = distance(currentMarker._latlng.lat,currentMarker._latlng.lng,featureInstanceLayer.feature.geometry.coordinates[1],featureInstanceLayer.feature.geometry.coordinates[0]);
+					
+						if (dist < radius){
+							parcelsInRadius = parcelsInRadius + featureInstanceLayer.feature.properties.NumberDeli;
+							//restyle layer
+							restyleLayer("#55bf2a",featureInstanceLayer);
+							withinBorder = true;
+							break;
+						}
+					}
+					
+					if (!withinBorder){
+						restyleLayer('#BBC2C4',featureInstanceLayer);
+					}
+				
+				});
+				
+				var pctParcelsRadius = parcelsInRadius/totalParcels*100;
+				document.getElementById("pct_demand_radius").innerHTML = pctParcelsRadius.toFixed(0).toString() + "%";
+				document.getElementById("total_parcels").innerHTML = parcelsInRadius.toFixed(0).toString();
+			
+			}
+			
+			function setRadius() {
+			//set radius of deliveries
+				var str1 = "Radius: ";
+				var straal = document.getElementById('RadiusSlider').value;
+				radius = straal;
+				str1 = str1 + Number(straal) + "km"
+				document.getElementById('RadiusShow').value = str1;
+				//redraw circles!
+				redrawMarkers();
+				recalculatePoints();		
+			}		
+
+			//catch slider change density
+			$("#RadiusSlider").on("input change", function() { setRadius(); });
+			
+			//Style for geojson points
+			var geojsonMarkerOptions = {
+				radius: 2,
+				fillColor: "#BBC2C4",
+				color: "#000",
+				weight: 0.5,
+				opacity: 1,
+				fillOpacity: 0.8
+			};
+			
+			 // load GeoJSON from an external file
+			 //$.getJSON('/comeos/point_delivery_data.geojson',function(data){ //online
+			 $.getJSON('deliveries_antw.geojson',function(data){ //offline
+			 geoJson = L.geoJson(data, {
+					pointToLayer: function (feature, latlng) {
+						return L.circleMarker(latlng, geojsonMarkerOptions);
+					}
+				}).addTo(map);
+			});
+
+			//add fullscreen button to map
+			L.control.fullscreen().addTo(map);
+
+		</script>
+	</body>
+</html>
